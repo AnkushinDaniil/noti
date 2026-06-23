@@ -91,27 +91,18 @@ if [ "$BROKER_OK" = "0" ] && command -v curl >/dev/null 2>&1; then
     BOT_TOKEN="${CLAUDE_PLUGIN_OPTION_BOT_TOKEN:-}"
     CHAT_ID="${CLAUDE_PLUGIN_OPTION_CHAT_ID:-}"
 
-    # If env not set, try config.json
-    if [ -z "$BOT_TOKEN" ]; then
+    # If env is incomplete, read config.json. Prefer jq (no Python needed); fall
+    # back to python3 only if jq is unavailable. Using bare `python3` as the sole
+    # parser is fragile — on some setups it is a wrapper/shim that refuses to run.
+    if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
         CONFIG_PATH="${NOTI_CONFIG:-${HOME}/.config/noti/config.json}"
-        if [ -r "$CONFIG_PATH" ] && command -v python3 >/dev/null 2>&1; then
-            BOT_TOKEN="$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('${CONFIG_PATH}'))
-    print(d.get('telegram', {}).get('bot_token', ''))
-except Exception:
-    print('')
-" 2>/dev/null || true)"
-            if [ -z "$CHAT_ID" ]; then
-                CHAT_ID="$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('${CONFIG_PATH}'))
-    print(d.get('telegram', {}).get('default_chat_id', ''))
-except Exception:
-    print('')
-" 2>/dev/null || true)"
+        if [ -r "$CONFIG_PATH" ]; then
+            if command -v jq >/dev/null 2>&1; then
+                [ -z "$BOT_TOKEN" ] && BOT_TOKEN="$(jq -r '.telegram.bot_token // empty' "$CONFIG_PATH" 2>/dev/null || true)"
+                [ -z "$CHAT_ID" ]  && CHAT_ID="$(jq -r '.telegram.default_chat_id // empty' "$CONFIG_PATH" 2>/dev/null || true)"
+            elif command -v python3 >/dev/null 2>&1; then
+                [ -z "$BOT_TOKEN" ] && BOT_TOKEN="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("telegram",{}).get("bot_token",""))' "$CONFIG_PATH" 2>/dev/null || true)"
+                [ -z "$CHAT_ID" ]  && CHAT_ID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("telegram",{}).get("default_chat_id",""))' "$CONFIG_PATH" 2>/dev/null || true)"
             fi
         fi
     fi
