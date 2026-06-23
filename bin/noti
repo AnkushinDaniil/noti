@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""noti CLI — tiny client for the local broker.
+
+Usage:
+  noti status            GET  /health
+  noti test [text]       POST /notify  (default text "noti test")
+  noti send <text...>    POST /notify
+
+Reads NOTI_BROKER_URL (default http://127.0.0.1:7432). Pure stdlib.
+Exit codes: 0 success, 1 usage/runtime error, 2 broker unreachable.
+"""
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+DEFAULT_URL = "http://127.0.0.1:7432"
+TIMEOUT = 10
+
+
+def broker_url():
+    return os.environ.get("NOTI_BROKER_URL", DEFAULT_URL).rstrip("/")
+
+
+def _get(path):
+    req = urllib.request.Request(broker_url() + path, method="GET")
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _post(path, obj):
+    data = json.dumps(obj).encode("utf-8")
+    req = urllib.request.Request(
+        broker_url() + path, data=data,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _unreachable(exc):
+    sys.stderr.write(
+        "noti: cannot reach broker at %s (%s)\n"
+        "Is the broker running? Try: bin/install-broker.sh or /noti:setup\n"
+        % (broker_url(), exc)
+    )
+    return 2
+
+
+def cmd_status():
+    try:
+        result = _get("/health")
+    except urllib.error.URLError as exc:
+        return _unreachable(exc.reason)
+    except OSError as exc:
+        return _unreachable(exc)
+    print("status:            %s" % result.get("status"))
+    print("version:           %s" % result.get("version"))
+    print("telegram_connected: %s" % result.get("telegram_connected"))
+    print("pending:           %s" % result.get("pending"))
+    return 0
+
+
+def cmd_notify(text):
+    try:
+        result = _post("/notify", {"text": text, "level": "info"})
+    except urllib.error.URLError as exc:
+        return _unreachable(exc.reason)
+    except OSError as exc:
+        return _unreachable(exc)
+    if result.get("sent"):
+        print("sent via: %s" % ", ".join(result.get("channels", [])))
+        return 0
+    sys.stderr.write("noti: broker accepted request but nothing was sent "
+                     "(check config.json / channels)\n")
+    return 1
+
+
+def main(argv):
+    if len(argv) < 2:
+        sys.stderr.write(__doc__)
+        return 1
+    cmd = argv[1]
+    if cmd == "status":
+        return cmd_status()
+    if cmd == "test":
+        text = " ".join(argv[2:]) if len(argv) > 2 else "noti test"
+        return cmd_notify("[noti] %s" % text)
+    if cmd == "send":
+        if len(argv) < 3:
+            sys.stderr.write("usage: noti send <text...>\n")
+            return 1
+        return cmd_notify(" ".join(argv[2:]))
+    sys.stderr.write("noti: unknown command '%s'\n" % cmd)
+    sys.stderr.write(__doc__)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

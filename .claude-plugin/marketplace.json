@@ -2,14 +2,10 @@
   "name": "noti-marketplace",
   "owner": { "name": "Daniil Ankushin" },
   "plugins": [
-    {
-      "name": "noti",
+    { "name": "noti",
       "source": { "source": "github", "repo": "AnkushinDaniil/noti" },
-      "description": "One-way Telegram notifications for Claude Code: get pinged when Claude needs you or finishes.",
-      "version": "1.0.0",
-      "license": "MIT",
-      "keywords": ["telegram", "notification", "phone"],
-      "category": "productivity"
-    }
+      "description": "Phone notifications + answer-from-phone for Claude Code.",
+      "version": "1.0.0", "license": "MIT",
+      "keywords": ["telegram","notification","phone"], "category": "productivity" }
   ]
 }

@@ -2,26 +2,17 @@
   "name": "noti",
   "displayName": "Noti — Phone Notifications",
   "version": "1.0.0",
-  "description": "Get a Telegram notification on your phone when Claude Code needs your permission or finishes a task.",
+  "description": "Telegram/Discord/Slack alerts when Claude finishes or needs input, plus answer-from-phone via ask_user.",
   "author": { "name": "Daniil Ankushin" },
   "homepage": "https://github.com/AnkushinDaniil/noti",
   "repository": "https://github.com/AnkushinDaniil/noti",
   "license": "MIT",
-  "keywords": ["telegram", "notification", "phone", "alert", "claude-code"],
+  "keywords": ["telegram", "notification", "phone", "alert", "human-in-the-loop"],
   "defaultEnabled": false,
   "userConfig": {
-    "bot_token": {
-      "type": "string",
-      "title": "Telegram Bot Token",
-      "description": "Token from @BotFather (e.g. 123456789:AAH...).",
-      "sensitive": true,
-      "required": true
-    },
-    "chat_id": {
-      "type": "string",
-      "title": "Your Telegram Chat ID",
-      "description": "Auto-detected by /noti:setup after you message your bot.",
-      "required": true
-    }
+    "bot_token": { "type": "string", "title": "Telegram Bot Token",
+      "description": "Token from @BotFather (e.g. 123456789:AAH...).", "sensitive": true, "required": true },
+    "chat_id": { "type": "string", "title": "Your Telegram Chat ID",
+      "description": "Auto-detected by /noti:setup after you DM your bot.", "required": true }
   }
 }
