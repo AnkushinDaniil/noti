@@ -42,9 +42,11 @@ the hook command — a thin locator script that finds the `noti` binary and exec
 4. Falls back to a direct Telegram `sendMessage` if the broker is unreachable
 5. Always exits 0 — never blocks or breaks a Claude turn
 
-The `PreToolUse` hook (`bin/permission_gate.sh` → `noti permission-gate`) can
-return a permission decision (allow/deny/ask), making it the one hook that is
-not fire-and-forget. See [Permission gate](#permission-gate) below.
+An **opt-in** `PreToolUse` gate (`bin/permission_gate.sh` → `noti permission-gate`) can
+return a permission decision (allow/deny/ask). It is **not wired by default** (it was too
+noisy — fired on every tool call), and when enabled it contacts the phone **only in the
+`default` permission mode**; auto / acceptEdits / bypassPermissions / dontAsk / plan pass
+straight through. See [Permission gate](#permission-gate) below.
 
 ## Answering from the phone: an MCP `ask_user` tool
 

@@ -72,18 +72,20 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a deeper explanation.
 |------------|---------|---------|
 | `Notification` | `permission_prompt` | Sends a Telegram alert when Claude pauses for permission |
 | `Stop` | (any) | Sends a Telegram alert when Claude finishes a turn |
-| `PreToolUse` | gated tools (`Bash`, `Write`, `Edit`, `NotebookEdit`) | Phone-first permission gate |
 
-**Alert hooks** (`Notification`, `Stop`): `bin/notify.sh` is a thin locator script that
-finds the `noti` binary and calls `noti notify <level>`. The binary reads the hook JSON
-from stdin, builds a short message, POSTs it to the broker (5-second timeout), and falls
-back to a direct Telegram `sendMessage` if the broker is unreachable. Always exits 0.
+The plugin ships only the two **alert hooks** by default. `bin/notify.sh` is a thin locator
+script that finds the `noti` binary and calls `noti notify <level>`. The binary reads the
+hook JSON from stdin, builds a short message, POSTs it to the broker (5-second timeout), and
+falls back to a direct Telegram `sendMessage` if the broker is unreachable. Always exits 0.
 
-**Permission gate** (`PreToolUse`): `bin/permission_gate.sh` calls `noti permission-gate`.
-The binary reads the hook JSON from stdin, sends an Allow/Deny question to the phone, and
-returns a permission decision on stdout. If the broker is unreachable or the timeout
-elapses, it emits a pass-through so Claude falls back to the normal terminal prompt.
-Always exits 0.
+**Permission gate — opt-in, OFF by default.** The plugin no longer wires a `PreToolUse`
+hook by default: it was too noisy, firing on *every* tool call — even in auto/acceptEdits
+modes where the tool proceeds without any prompt. The `noti permission-gate` subcommand and
+`bin/permission_gate.sh` still ship for those who want phone-first approvals. To enable it:
+set `ask.permissions.enabled: true` in `~/.config/noti/config.json` **and** add a `PreToolUse`
+hook to `~/.claude/settings.json` pointing at `permission_gate.sh`. Even then it contacts the
+phone **only in the `default` permission mode** — in auto / acceptEdits / bypassPermissions /
+dontAsk / plan it passes straight through to the terminal.
 
 ### Broker daemon (single getUpdates owner)
 
@@ -143,7 +145,7 @@ prompts are gated. All fields have defaults and can be overridden per-project
 | `idle_timeout_seconds` | `30` | Seconds before escalating to phone in `timeout` mode (clamped 1–50) |
 | `laptop` | `true` | Whether to show the question in the Claude Code UI via MCP elicitation |
 | `require_laptop` | `true` | If `true` and the client does not support elicitation, `ask_user` returns an error instead of falling back silently |
-| `permissions.enabled` | `true` | Enable the phone-first permission gate for tool-approval prompts |
+| `permissions.enabled` | `false` | Opt-in phone-first permission gate (off by default; also needs a `PreToolUse` hook in your settings). Only engages in `default` permission mode |
 | `permissions.timeout_seconds` | `30` | How long the gate waits for a phone response before falling back to the normal terminal prompt |
 | `permissions.tools` | `["Bash","Write","Edit","NotebookEdit"]` | Tools whose permission prompts are sent to the phone |
 

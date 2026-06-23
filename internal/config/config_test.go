@@ -125,8 +125,8 @@ func TestResolveAskDefaults(t *testing.T) {
 	if a.RequireLaptop == nil || !*a.RequireLaptop {
 		t.Errorf("RequireLaptop = %v, want true", a.RequireLaptop)
 	}
-	if a.Permissions == nil || !a.Permissions.Enabled || a.Permissions.TimeoutSeconds != 30 {
-		t.Errorf("Permissions = %+v, want {true 30}", a.Permissions)
+	if a.Permissions == nil || a.Permissions.Enabled || a.Permissions.TimeoutSeconds != 30 {
+		t.Errorf("Permissions = %+v, want {Enabled:false TimeoutSeconds:30}", a.Permissions)
 	}
 }
 

@@ -80,7 +80,7 @@ func defaultAsk() Ask {
 		Laptop:             boolPtr(true),
 		RequireLaptop:      boolPtr(true),
 		Permissions: &Permissions{
-			Enabled:        true,
+			Enabled:        false,
 			TimeoutSeconds: 30,
 			Tools:          append([]string(nil), DefaultGatedTools...),
 		},
@@ -177,7 +177,7 @@ func (c *Config) ResolveAsk(project string) Ask {
 	// Guarantee the permission-gate has a non-empty gated tool set even when a
 	// config layer supplied a Permissions block without a tools list.
 	if result.Permissions == nil {
-		result.Permissions = &Permissions{Enabled: true, TimeoutSeconds: 30}
+		result.Permissions = &Permissions{Enabled: false, TimeoutSeconds: 30}
 	}
 	if len(result.Permissions.Tools) == 0 {
 		result.Permissions.Tools = append([]string(nil), DefaultGatedTools...)

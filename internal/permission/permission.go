@@ -48,10 +48,11 @@ const (
 
 // hookInput is the subset of the PreToolUse hook stdin payload we use.
 type hookInput struct {
-	HookEventName string          `json:"hook_event_name"`
-	ToolName      string          `json:"tool_name"`
-	ToolInput     json.RawMessage `json:"tool_input"`
-	Cwd           string          `json:"cwd"`
+	HookEventName  string          `json:"hook_event_name"`
+	ToolName       string          `json:"tool_name"`
+	ToolInput      json.RawMessage `json:"tool_input"`
+	Cwd            string          `json:"cwd"`
+	PermissionMode string          `json:"permission_mode"`
 }
 
 // hookSpecificOutput mirrors Claude Code's PreToolUse decision object.
@@ -90,8 +91,14 @@ func Run(cfg *config.Config, in io.Reader, out io.Writer) error {
 	ask := cfg.ResolveAsk(project)
 	perms := ask.Permissions
 
-	// Disabled, no config, or tool not gated → pass through without the broker.
-	if perms == nil || !perms.Enabled || !gated(perms.Tools, input.ToolName) {
+	// Pass through (never touch the phone) when:
+	//   - the gate is disabled / unconfigured, or the tool isn't gated, OR
+	//   - the session is NOT in the normal "ask me" permission mode. In auto,
+	//     acceptEdits, bypassPermissions, dontAsk, or plan modes (and when the
+	//     mode is unknown/blank) the tool would proceed without a prompt, so
+	//     asking the phone is both wrong and noisy. Only "default" mode prompts.
+	if perms == nil || !perms.Enabled || !gated(perms.Tools, input.ToolName) ||
+		input.PermissionMode != "default" {
 		writeDecision(out, decisionAsk, "")
 		return nil
 	}

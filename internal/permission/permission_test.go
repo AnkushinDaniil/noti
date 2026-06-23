@@ -80,7 +80,7 @@ func enabledCfg() *config.Config {
 
 func TestGateAllow(t *testing.T) {
 	srv, sb := newStubBroker(t, "Allow")
-	payload := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/tmp/proj"}`
+	payload := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/tmp/proj","permission_mode":"default"}`
 	o := runGate(t, enabledCfg(), srv.URL, payload)
 	if o.HookSpecificOutput.PermissionDecision != decisionAllow {
 		t.Errorf("decision = %q, want allow", o.HookSpecificOutput.PermissionDecision)
@@ -90,9 +90,24 @@ func TestGateAllow(t *testing.T) {
 	}
 }
 
+func TestGateAutoModePassThrough(t *testing.T) {
+	srv, sb := newStubBroker(t, "Allow")
+	// In a non-default permission mode (auto / acceptEdits / bypassPermissions /
+	// dontAsk / plan) the tool proceeds without a prompt, so the gate MUST pass
+	// through and never contact the phone. Regression test for phone spam in auto mode.
+	payload := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/tmp/proj","permission_mode":"acceptEdits"}`
+	o := runGate(t, enabledCfg(), srv.URL, payload)
+	if o.HookSpecificOutput.PermissionDecision != decisionAsk {
+		t.Errorf("decision = %q, want ask (pass-through) in non-default mode", o.HookSpecificOutput.PermissionDecision)
+	}
+	if sb.askCalled || sb.waitCalled {
+		t.Errorf("broker contacted in non-default mode (ask=%v wait=%v); want no contact", sb.askCalled, sb.waitCalled)
+	}
+}
+
 func TestGateDeny(t *testing.T) {
 	srv, _ := newStubBroker(t, "Deny")
-	payload := `{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"/x"},"cwd":"/tmp/proj"}`
+	payload := `{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"/x"},"cwd":"/tmp/proj","permission_mode":"default"}`
 	o := runGate(t, enabledCfg(), srv.URL, payload)
 	if o.HookSpecificOutput.PermissionDecision != decisionDeny {
 		t.Errorf("decision = %q, want deny", o.HookSpecificOutput.PermissionDecision)
@@ -106,7 +121,7 @@ func TestGateTimeoutPassThrough(t *testing.T) {
 	srv, sb := newStubBroker(t, "") // never answers
 	// timeout_seconds=1 so the poll loop exits quickly.
 	cfg := &config.Config{Ask: &config.Ask{Permissions: &config.Permissions{Enabled: true, TimeoutSeconds: 1}}}
-	payload := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/tmp/proj"}`
+	payload := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/tmp/proj","permission_mode":"default"}`
 	o := runGate(t, cfg, srv.URL, payload)
 	if o.HookSpecificOutput.PermissionDecision != decisionAsk {
 		t.Errorf("decision = %q, want ask (pass-through)", o.HookSpecificOutput.PermissionDecision)
@@ -119,7 +134,7 @@ func TestGateTimeoutPassThrough(t *testing.T) {
 func TestGateDisabledPassThrough(t *testing.T) {
 	srv, sb := newStubBroker(t, "Allow")
 	cfg := &config.Config{Ask: &config.Ask{Permissions: &config.Permissions{Enabled: false, TimeoutSeconds: 30}}}
-	payload := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/tmp/proj"}`
+	payload := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/tmp/proj","permission_mode":"default"}`
 	o := runGate(t, cfg, srv.URL, payload)
 	if o.HookSpecificOutput.PermissionDecision != decisionAsk {
 		t.Errorf("decision = %q, want ask (disabled)", o.HookSpecificOutput.PermissionDecision)
@@ -131,7 +146,7 @@ func TestGateDisabledPassThrough(t *testing.T) {
 
 func TestGateNonGatedPassThrough(t *testing.T) {
 	srv, sb := newStubBroker(t, "Allow")
-	payload := `{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/x"},"cwd":"/tmp/proj"}`
+	payload := `{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/x"},"cwd":"/tmp/proj","permission_mode":"default"}`
 	o := runGate(t, enabledCfg(), srv.URL, payload)
 	if o.HookSpecificOutput.PermissionDecision != decisionAsk {
 		t.Errorf("decision = %q, want ask (non-gated)", o.HookSpecificOutput.PermissionDecision)
@@ -142,7 +157,7 @@ func TestGateNonGatedPassThrough(t *testing.T) {
 }
 
 func TestGateBrokerUnreachablePassThrough(t *testing.T) {
-	payload := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/tmp/proj"}`
+	payload := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/tmp/proj","permission_mode":"default"}`
 	// Point at a closed port.
 	o := runGate(t, enabledCfg(), "http://127.0.0.1:1", payload)
 	if o.HookSpecificOutput.PermissionDecision != decisionAsk {
