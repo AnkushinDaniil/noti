@@ -3,6 +3,19 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.1] - 2026-06-23
+
+### Changed
+- **Permission gate is now opt-in and OFF by default.** The `PreToolUse` hook
+  was removed from the plugin's default hooks (it fired on every tool call and
+  asked the phone even in auto/acceptEdits modes where the tool proceeds without
+  a prompt). The `noti permission-gate` subcommand remains for opt-in use, and
+  now contacts the phone **only in the `default` permission mode**.
+- **Richer hook notifications.** Notifications now show which project/session
+  they came from (project name, cwd, short session id) and a context line — for
+  `finished`, the tail of Claude's last message read from the transcript; for
+  `needs you`, the permission/prompt text.
+
 ## [2.0.0] - 2026-06-23
 
 Rewrote noti in Go as a single static binary (was Python+bash). Feature parity

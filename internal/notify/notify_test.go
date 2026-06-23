@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -99,23 +101,56 @@ func TestRun_FallsBackToTelegram(t *testing.T) {
 
 func TestBuildText(t *testing.T) {
 	cases := []struct {
-		level, project, message, want string
+		name    string
+		level   string
+		payload hookPayload
+		wants   []string // substrings that must all appear
 	}{
-		{"attention", "proj", "msg", "\U0001f514 [proj] msg"},
-		{"attention", "proj", "", "\U0001f514 [proj] Claude needs you"},
-		{"attention", "", "", "\U0001f514 Claude needs you"},
-		{"done", "proj", "", "✅ [proj] Claude finished"},
-		{"done", "", "", "✅ Claude finished"},
-		{"info", "proj", "msg", "ℹ️ [proj] msg"},
-		{"info", "", "msg", "ℹ️ msg"},
-		{"info", "", "", "ℹ️ Claude notification"},
+		{"attention with message", "attention",
+			hookPayload{Cwd: "/home/user/proj", Message: "Allow Bash?", SessionID: "abcd1234ef"},
+			[]string{"🔔", "proj", "needs you", "Allow Bash?", "s:abcd1234"}},
+		{"attention no message", "attention",
+			hookPayload{Cwd: "/home/user/proj"},
+			[]string{"🔔", "proj", "waiting for your input"}},
+		{"attention no project", "attention",
+			hookPayload{},
+			[]string{"🔔", "Claude Code"}},
+		{"done no transcript", "done",
+			hookPayload{Cwd: "/home/user/proj"},
+			[]string{"✅", "proj", "finished", "/home/user/proj"}},
+		{"info with message", "info",
+			hookPayload{Cwd: "/home/user/proj", Message: "fyi"},
+			[]string{"ℹ️", "proj", "fyi"}},
 	}
 	for _, tc := range cases {
-		got := buildText(tc.level, tc.project, tc.message)
-		if got != tc.want {
-			t.Errorf("buildText(%q,%q,%q) = %q, want %q",
-				tc.level, tc.project, tc.message, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildText(tc.level, tc.payload)
+			for _, w := range tc.wants {
+				if !strings.Contains(got, w) {
+					t.Errorf("buildText(%q) = %q, missing %q", tc.level, got, w)
+				}
+			}
+		})
+	}
+}
+
+func TestLastAssistantText(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "t.jsonl")
+	lines := []string{
+		`{"type":"user","message":{"content":"hi"}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"first"}]}}`,
+		`{"type":"system","subtype":"x"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"second\nline"}]}}`,
+	}
+	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastAssistantText(p); got != "second line" {
+		t.Errorf("lastAssistantText = %q, want %q", got, "second line")
+	}
+	if lastAssistantText("") != "" || lastAssistantText(filepath.Join(dir, "nope")) != "" {
+		t.Error("expected empty result for missing/empty path")
 	}
 }
 
