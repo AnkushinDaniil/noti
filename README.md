@@ -1,14 +1,17 @@
 # noti — Phone Notifications for Claude Code
 
-Get a Telegram (or Discord/Slack) notification on your phone when Claude Code
-pauses for a permission prompt or finishes a task. Answer Claude's questions
-directly from your phone via the `ask_user` MCP tool.
+Get a Telegram notification on your phone when Claude Code pauses for a
+permission prompt or finishes a task. Answer Claude's questions directly from
+your phone via the `ask_user` MCP tool.
+
+v2.0.0 is a complete rewrite in Go: a single static binary, no Python or
+external runtime dependencies.
 
 ## Prerequisites
 
-- **python3** (3.9+) — broker daemon and MCP server
-- **curl** — hook notifications and setup
-- **jq** (recommended) — JSON parsing in hooks; degrades gracefully without it
+- **Go 1.23+** — to build the binary from source (a pre-built download will be
+  available in Step 3 of the roadmap)
+- **curl** — optional; used in `notify.sh` fallback path
 
 ## Quick Install
 
@@ -19,92 +22,76 @@ directly from your phone via the `ask_user` MCP tool.
 ```
 
 `/noti:setup` is an interactive runbook that:
-1. Creates a Telegram bot via @BotFather
-2. Writes `~/.config/noti/config.json` (chmod 600)
-3. Auto-detects your chat ID via a one-shot `getUpdates`
-4. Sends a test message to confirm delivery
-5. Installs the broker daemon (launchd on macOS, systemd --user on Linux)
+1. Checks Go is installed
+2. Creates a Telegram bot via @BotFather
+3. Writes `~/.config/noti/config.json` (chmod 600)
+4. Builds the `noti` binary via `scripts/build.sh`
+5. Auto-detects your chat ID via `noti detect-chat`
+6. Sends a test message via `noti test`
+7. Installs the broker daemon (launchd on macOS, systemd --user on Linux)
 
-After setup, **restart Claude Code** (or run `/reload-plugins`) to activate hooks and the MCP server.
+After setup, **restart Claude Code** (or run `/reload-plugins`) to activate
+hooks and the MCP server.
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│  Claude Code session                                   │
-│                                                        │
-│  hooks/hooks.json ──► bin/notify.sh ──► broker /notify │
-│                                               │         │
-│  server/mcp_server.py ◄──── stdio ────────── MCP       │
-│         │                                              │
-│         └──► broker /ask /wait /notify /send_file      │
-└───────────────────────────┬──────────────────────────-─┘
+┌────────────────────────────────────────────────────────┐
+│  Claude Code session                                     │
+│                                                          │
+│  hooks/hooks.json ──► bin/notify.sh ──► broker /notify  │
+│                                                          │
+│  noti mcp  ◄──── stdio ──── Claude MCP client           │
+│      │                                                   │
+│      └──► broker /ask /wait /notify /send_file           │
+└───────────────────────────┬──────────────────────────-──┘
                             │ HTTP loopback 127.0.0.1:7432
                     ┌───────▼───────┐
-                    │  bin/broker.py │  (long-lived daemon)
+                    │  noti broker  │   (long-lived daemon)
                     │               │
-                    │  HTTP server  │◄── /health /notify /ask /wait /send_file
+                    │  HTTP server  │◄── /health /notify /ask /wait
                     │  Telegram     │──► getUpdates (single consumer)
-                    │  poll thread  │
+                    │  poll loop    │
                     └───────────────┘
                             │
-                     Telegram / Discord / Slack
+                         Telegram
 ```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a deeper explanation.
 
 ### Hooks (one-way alerts)
 
 `hooks/hooks.json` registers two hooks:
 
-| Hook | Matcher | Script arg | When fired |
-|------|---------|-----------|------------|
+| Hook | Matcher | Level | When fired |
+|------|---------|-------|------------|
 | `Notification` | `permission_prompt` | `attention` | Claude pauses for your permission |
 | `Stop` | (any) | `done` | Claude finishes a turn |
 
-`bin/notify.sh` reads the hook JSON from stdin, builds a short message
-(`🔔 [project] <message>` or `✅ [project] Claude finished`), then:
-1. POSTs to the broker `POST /notify` (5-second timeout)
-2. Falls back to a direct Telegram `sendMessage` if the broker is unreachable
-3. Always exits 0 — never blocks or breaks a Claude turn
-
-**Note:** `idle_prompt` is intentionally NOT matched (it false-fires after every turn).
+`bin/notify.sh` is a thin locator script that finds the `noti` binary and
+calls `noti notify <level>`. The binary reads the hook JSON from stdin, builds
+a short message, POSTs it to the broker (5-second timeout), and falls back to a
+direct Telegram `sendMessage` if the broker is unreachable. Always exits 0.
 
 ### Broker daemon (single getUpdates owner)
 
-`bin/broker.py` is a long-lived Python daemon. It is the **only** process that
-polls Telegram's `getUpdates` endpoint. This is required because Telegram allows
-exactly one active `getUpdates` consumer per bot token (HTTP 409 otherwise).
+`noti broker` is the long-lived daemon. It is the **only** process that polls
+Telegram's `getUpdates` endpoint — Telegram allows exactly one concurrent
+consumer per bot token (HTTP 409 Conflict otherwise).
 
-The broker:
 - Binds `127.0.0.1:7432` (loopback only)
-- Runs a Telegram long-poll thread (`timeout=25s`)
+- Long-polls Telegram (`timeout=25s`)
 - Manages a ticket registry for ask/wait round-trips
 - Writes a PID lockfile to prevent duplicate instances
 - Persists the `getUpdates` offset across restarts
 
-### MCP server (`server/mcp_server.py`)
+### MCP server
 
-A hand-rolled JSON-RPC 2.0 over stdio server (no external SDK). One instance
-per Claude Code session. It forwards all tool calls to the broker over HTTP.
-
-### Per-project routing
-
-In `~/.config/noti/config.json` you can route different projects to different
-chats or channels:
-
-```json
-"routing": [
-  { "match": "my-secret-proj", "channel": "telegram", "chat_id": "111222333", "match_type": "project" },
-  { "match": "/work/*", "channel": "discord", "match_type": "path_glob" }
-]
-```
-
-`match_type` options:
-- `"project"` — matches `basename(cwd)` exactly
-- `"path_glob"` — `fnmatch` on the full `cwd` path
-
-First match wins; if nothing matches, the telegram default is used.
+`noti mcp` is a JSON-RPC 2.0 over stdio server. One instance per Claude Code
+session. Reads `NOTI_BROKER_URL` (default `http://127.0.0.1:7432`) and forwards
+all tool calls to the broker over HTTP. **Never touches the bot token.**
 
 ---
 
@@ -117,70 +104,97 @@ First match wins; if nothing matches, the telegram default is used.
   "telegram": { "bot_token": "123:AAH...", "default_chat_id": "987654321" },
   "channels": { "discord_webhook": "", "slack_webhook": "" },
   "routing": [],
-  "broker": { "host": "127.0.0.1", "port": 7432 }
+  "broker": { "host": "127.0.0.1", "port": 7432 },
+  "ask": {
+    "mode": "timeout",
+    "idle_timeout_seconds": 30,
+    "laptop": true,
+    "require_laptop": true,
+    "permissions": { "enabled": true, "timeout_seconds": 30 }
+  }
 }
 ```
 
+The `ask` block is wired in now; the two modes (`timeout` / `forward-all`) and
+the permission gate become active in v2 Step 2.
+
 Config path can be overridden with the `NOTI_CONFIG` environment variable.
+
+### Per-project routing
+
+Route different projects to different chats:
+
+```json
+"routing": [
+  { "match": "my-secret-proj", "channel": "telegram", "chat_id": "111222333", "match_type": "project" },
+  { "match": "/work/client-*", "channel": "telegram", "chat_id": "444555666", "match_type": "path_glob" }
+]
+```
+
+`match_type` options:
+- `"project"` — matches `basename(cwd)` exactly (default)
+- `"path_glob"` — `filepath.Match` on the full `cwd` path
+
+First match wins; if nothing matches, the telegram default is used.
 
 ---
 
 ## MCP Tools
 
-All tools are available to Claude via the `noti` MCP server.
-
 | Tool | Description |
 |------|-------------|
-| `ask_user` | Ask the human a question; returns the answer or a ticket for `wait_for_reply`. Use INSTEAD of guessing or stopping. |
-| `wait_for_reply` | Continue waiting for a phone reply. Call repeatedly with the ticket id until answered. |
+| `ask_user` | Ask the human a question; returns the answer or a ticket. Use INSTEAD of guessing or stopping. |
+| `wait_for_reply` | Continue waiting for a phone reply. Call with the ticket until answered. |
 | `notify` | Proactively send a short status update to the user's phone. |
 | `send_file` | Send a file or document to the user's phone. |
-| `send_image` | Send an image to the user's phone (same as send_file, clearly named). |
-
-### `ask_user` flow
-
-Claude calls `ask_user` with a question and optional buttons. The broker
-sends a Telegram message with inline keyboard buttons (if options provided).
-The user taps a button or replies; the answer is returned to Claude.
-
-Because the MCP tool-call timeout is ~60s, the broker returns `pending` after
-~50s if no reply, and Claude should call `wait_for_reply` repeatedly until answered.
+| `send_image` | Send an image to the user's phone. |
 
 ---
 
 ## Broker HTTP API
 
-Loopback only. All endpoints accept/return JSON.
+Loopback only (`127.0.0.1:7432`). All endpoints accept/return JSON.
 
 | Method | Route | Description |
 |--------|-------|-------------|
-| GET | `/health` | Status check |
-| POST | `/notify` | Send a notification |
-| POST | `/ask` | Ask a question, wait for reply |
-| POST | `/wait` | Continue waiting on a ticket |
-| POST | `/send_file` | Send a file/image |
+| GET | `/health` | Status — `{"status":"ok","version":"2.0.0",...}` |
+| POST | `/notify` | Send a notification — `{text, level?, channel?, chat_id?, project?}` |
+| POST | `/ask` | Create a question ticket — `{question, options?[], project?, chat_id?}` |
+| POST | `/wait` | Poll for an answer — `{ticket, timeout?}` (blocks up to 55s) |
+| POST | `/cancel` | Cancel a ticket — `{ticket}` |
+| GET | `/config` | Resolved ask config — `?project=NAME` |
 
 ---
 
-## Broker Install / Uninstall
+## Build & Install
 
 ```bash
-# Install (run via /noti:setup or manually):
+# Build the binary into bin/noti:
+bash scripts/build.sh
+
+# Or build to the persistent data directory (survives plugin updates):
+OUT="${CLAUDE_PLUGIN_DATA:-${HOME}/.local/state/noti}/bin/noti" bash scripts/build.sh
+
+# Install broker as a background service:
 "${CLAUDE_PLUGIN_ROOT}/bin/install-broker.sh"
 
 # Uninstall:
 "${CLAUDE_PLUGIN_ROOT}/bin/uninstall-broker.sh"
-
-# Status / manual test:
-"${CLAUDE_PLUGIN_ROOT}/bin/noti" status
-"${CLAUDE_PLUGIN_ROOT}/bin/noti" test "hello from CLI"
 ```
 
-**macOS:** installs as a LaunchAgent (`~/Library/LaunchAgents/com.noti.broker.plist`) that starts on login.
+---
 
-**Linux:** installs as a systemd user service (`~/.config/systemd/user/noti-broker.service`) with `Restart=always`.
+## Subcommands
 
-After a **plugin update**, re-run `/noti:setup` or `install-broker.sh` to refresh the service path (because `CLAUDE_PLUGIN_ROOT` changes with each update).
+```
+noti broker              Start the background broker daemon
+noti mcp                 Start the MCP stdio server
+noti notify <level>      Send a hook notification (stdin: hook JSON)
+noti detect-chat         Print the most recent Telegram chat ID (setup helper)
+noti test [text]         Send a test notification
+noti version             Print version
+noti help                Print usage
+```
 
 ---
 
@@ -190,11 +204,9 @@ After a **plugin update**, re-run `/noti:setup` or `install-broker.sh` to refres
 |----------|---------|-------------|
 | `CLAUDE_PLUGIN_ROOT` | set by Claude Code | Absolute path to plugin install dir |
 | `CLAUDE_PLUGIN_DATA` | `~/.local/state/noti/` | Persistent state: offsets, lockfile, logs |
-| `CLAUDE_PLUGIN_OPTION_BOT_TOKEN` | — | Token fallback for notify.sh if broker down |
-| `CLAUDE_PLUGIN_OPTION_CHAT_ID` | — | Chat ID fallback for notify.sh |
-| `NOTI_BROKER_URL` | `http://127.0.0.1:7432` | Broker endpoint |
+| `NOTI_BROKER_URL` | `http://127.0.0.1:7432` | Broker endpoint (read by `noti mcp`) |
 | `NOTI_CONFIG` | `~/.config/noti/config.json` | Config file path override |
-| `NOTI_TEST` | — | Set to `1` for offline test mode (no real Telegram) |
+| `NOTI_TEST` | — | Set to `1` for offline test mode (no real Telegram I/O) |
 
 ---
 
@@ -204,18 +216,20 @@ After a **plugin update**, re-run `/noti:setup` or `install-broker.sh` to refres
 - The broker binds **loopback only** (`127.0.0.1`) — not accessible over the network.
 - Incoming Telegram updates are validated against allowed chat IDs — unknown senders are ignored.
 - The bot token is **never logged**.
-- Messages transit Telegram's servers. For maximum privacy, use BotFather → `/setprivacy` → Enable.
+- The MCP server never receives the bot token — it only knows the broker URL.
+- Messages transit Telegram's servers. For maximum privacy: BotFather → `/setprivacy` → Enable.
 
 ---
 
 ## Known Limitations
 
-- The broker only runs while you are **logged in**. A sleeping machine queues webhook notifications
-  but `ask_user` calls will time out if the machine is asleep.
-- **One bot per user.** You cannot run two separate broker instances with the same token
-  (Telegram HTTP 409). Use one bot and route different projects via `routing` config.
-- Slack file sending requires a bot token (not just an incoming webhook).
-- After a plugin update, the broker service path must be refreshed via `/noti:setup`.
+- The broker only runs while you are **logged in**. A sleeping machine queues
+  Telegram notifications but `ask_user` calls will time out if the machine is asleep.
+- **One bot per user.** Two concurrent broker instances with the same token cause
+  Telegram HTTP 409. Use one bot and route different projects via `routing`.
+- After a plugin update, re-run `/noti:setup` or `install-broker.sh` to refresh
+  the service path (`CLAUDE_PLUGIN_ROOT` changes with each update).
+- Pre-built release binaries (no Go required) land in v2 Step 3.
 
 ---
 

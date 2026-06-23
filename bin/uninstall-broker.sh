@@ -8,7 +8,7 @@ set -euo pipefail
 LABEL="com.noti.broker"
 SERVICE="noti-broker"
 
-err() { printf 'uninstall-broker: %s\n' "$*" >&2; }
+err()  { printf 'uninstall-broker: %s\n' "$*" >&2; }
 info() { printf 'uninstall-broker: %s\n' "$*"; }
 
 OS="$(uname -s)"
