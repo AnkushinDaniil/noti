@@ -11,8 +11,8 @@
   "defaultEnabled": false,
   "userConfig": {
     "bot_token": { "type": "string", "title": "Telegram Bot Token",
-      "description": "Token from @BotFather (e.g. 123456789:AAH...).", "sensitive": true, "required": true },
+      "description": "Optional. The source of truth is ~/.config/noti/config.json (written by /noti:setup); this is only a fallback env var for notify.sh when the broker is down.", "sensitive": true, "required": false },
     "chat_id": { "type": "string", "title": "Your Telegram Chat ID",
-      "description": "Auto-detected by `noti detect-chat` after you DM your bot.", "required": true }
+      "description": "Optional fallback. /noti:setup stores your chat id in ~/.config/noti/config.json.", "required": false }
   }
 }
