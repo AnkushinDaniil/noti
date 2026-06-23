@@ -5,39 +5,43 @@
 # Linux  -> systemd --user unit  ~/.config/systemd/user/noti-broker.service
 #
 # The broker must run continuously so the MCP tool ask_user can collect phone
-# replies (it is the single Telegram getUpdates owner). Because CLAUDE_PLUGIN_ROOT
-# changes on every plugin update, you MUST re-run this script (or /noti:setup)
-# after updating the plugin.
+# replies (it is the single Telegram getUpdates owner). Re-run this script (or
+# /noti:setup) after updating the plugin so the service path stays current.
 set -euo pipefail
 
 LABEL="com.noti.broker"
 SERVICE="noti-broker"
 
-err() { printf 'install-broker: %s\n' "$*" >&2; }
+err()  { printf 'install-broker: %s\n' "$*" >&2; }
 info() { printf 'install-broker: %s\n' "$*"; }
 
 # Resolve the plugin root: prefer CLAUDE_PLUGIN_ROOT, else derive from this script.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
-BROKER_PY="${PLUGIN_ROOT}/bin/broker.py"
 
-if [ ! -f "${BROKER_PY}" ]; then
-  err "broker.py not found at ${BROKER_PY}"
-  exit 1
-fi
-
-# Resolve a usable python3.
-PYTHON_BIN="$(command -v python3 || true)"
-if [ -z "${PYTHON_BIN}" ]; then
-  err "python3 not found in PATH"
-  exit 1
-fi
-
-# Resolve the data dir (survives updates). Falls back like the broker does.
+# Resolve the installed noti binary.
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-${HOME}/.local/state/noti}"
 mkdir -p "${DATA_DIR}"
-LOG_FILE="${DATA_DIR}/broker.log"
 
+NOTI_BIN="${DATA_DIR}/bin/noti"
+if [ ! -x "${NOTI_BIN}" ]; then
+  # Fall back to a binary built inside the repo checkout.
+  NOTI_BIN="${PLUGIN_ROOT}/bin/noti"
+fi
+if [ ! -x "${NOTI_BIN}" ]; then
+  info "noti binary not found — fetching it…"
+  if [ -x "${PLUGIN_ROOT}/scripts/fetch-binary.sh" ]; then
+    OUT="${DATA_DIR}/bin/noti" bash "${PLUGIN_ROOT}/scripts/fetch-binary.sh" || true
+  fi
+  NOTI_BIN="${DATA_DIR}/bin/noti"
+fi
+if [ ! -x "${NOTI_BIN}" ]; then
+  err "noti binary not found and could not be fetched."
+  err "Run ${PLUGIN_ROOT}/scripts/fetch-binary.sh (or scripts/build.sh with Go installed)."
+  exit 1
+fi
+
+LOG_FILE="${DATA_DIR}/broker.log"
 OS="$(uname -s)"
 
 install_macos() {
@@ -56,8 +60,8 @@ install_macos() {
   <string>${LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${PYTHON_BIN}</string>
-    <string>${BROKER_PY}</string>
+    <string>${NOTI_BIN}</string>
+    <string>broker</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -81,7 +85,7 @@ PLIST
   launchctl load -w "${plist}"
   info "installed launchd agent: ${plist}"
   info "logs: ${LOG_FILE}"
-  info "broker started. Check: noti status"
+  info "broker started. Verify: noti version"
 }
 
 install_linux() {
@@ -96,7 +100,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${PYTHON_BIN} ${BROKER_PY}
+ExecStart=${NOTI_BIN} broker
 Environment=CLAUDE_PLUGIN_ROOT=${PLUGIN_ROOT}
 Environment=CLAUDE_PLUGIN_DATA=${DATA_DIR}
 Restart=always
@@ -112,17 +116,16 @@ UNIT
   systemctl --user enable --now "${SERVICE}.service"
   info "installed systemd user unit: ${unit}"
   info "logs: ${LOG_FILE}"
-  info "broker started. Check: noti status   (or: systemctl --user status ${SERVICE})"
+  info "broker started. Verify: systemctl --user status ${SERVICE}"
 }
 
 case "${OS}" in
   Darwin) install_macos ;;
   Linux)  install_linux ;;
   *)
-    err "unsupported OS: ${OS}. Run the broker manually: ${PYTHON_BIN} ${BROKER_PY}"
+    err "unsupported OS: ${OS}. Run the broker manually: ${NOTI_BIN} broker &"
     exit 1
     ;;
 esac
 
-info "NOTE: CLAUDE_PLUGIN_ROOT changes on each plugin update."
-info "Re-run this script (or /noti:setup) after updating the noti plugin."
+info "NOTE: Re-run this script after updating the noti plugin."

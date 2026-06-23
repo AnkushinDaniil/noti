@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
-# notify.sh — thin locator wrapper for the noti binary hook notifier.
+# mcp.sh — thin locator wrapper that launches the noti MCP stdio server.
 #
-# Usage: notify.sh <level>   (level = attention | done | info)
-# Reads hook JSON from stdin. Always exits 0.
+# Declared as the MCP server command in .mcp.json. Resolves the noti binary the
+# same way notify.sh does, then exec's `noti mcp` (stdin/stdout are the JSON-RPC
+# channel, so we exec to stay transparent).
 #
 # Binary search order:
-#   1. $CLAUDE_PLUGIN_DATA/bin/noti   (installed by scripts/build.sh)
+#   1. $CLAUDE_PLUGIN_DATA/bin/noti   (downloaded by scripts/fetch-binary.sh)
 #   2. $CLAUDE_PLUGIN_ROOT/bin/noti   (dev checkout)
 #   3. noti  on $PATH
 set -uo pipefail
 
-LEVEL="${1:-info}"
-
 NOTI_BIN=""
-
 if [ -n "${CLAUDE_PLUGIN_DATA:-}" ] && [ -x "${CLAUDE_PLUGIN_DATA}/bin/noti" ]; then
   NOTI_BIN="${CLAUDE_PLUGIN_DATA}/bin/noti"
 elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -x "${CLAUDE_PLUGIN_ROOT}/bin/noti" ]; then
@@ -23,8 +21,8 @@ elif command -v noti >/dev/null 2>&1; then
 fi
 
 if [ -z "${NOTI_BIN}" ]; then
-  printf '[noti] notify.sh: noti binary not found — run scripts/build.sh and bin/install-broker.sh\n' >&2
-  exit 0
+  echo "[noti] mcp.sh: noti binary not found — run /noti:setup (downloads the binary)" >&2
+  exit 1
 fi
 
-exec "${NOTI_BIN}" notify "${LEVEL}"
+exec "${NOTI_BIN}" mcp

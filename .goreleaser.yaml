@@ -1,0 +1,43 @@
+version: 2
+project_name: noti
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: noti
+    main: .
+    binary: noti
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/AnkushinDaniil/noti/internal/version.Version={{ .Version }}
+
+archives:
+  - id: noti
+    name_template: "noti_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: AnkushinDaniil
+    name: noti
+  draft: false
+  prerelease: auto
+
+changelog:
+  disable: true

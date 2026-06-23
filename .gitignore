@@ -1,11 +1,6 @@
 # Logs
 *.log
 
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-
 # macOS
 .DS_Store
 
@@ -18,6 +13,14 @@ config.json
 # Broker runtime state
 *.offset
 *.lock
+
+# Go build outputs
+/bin/noti
+noti-*-*
+*.test
+
+# GoReleaser
+/dist/
 
 # Editor / IDE
 .idea/

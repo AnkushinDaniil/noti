@@ -1,8 +1,8 @@
 {
   "name": "noti",
   "displayName": "Noti — Phone Notifications",
-  "version": "1.0.0",
-  "description": "Telegram/Discord/Slack alerts when Claude finishes or needs input, plus answer-from-phone via ask_user.",
+  "version": "2.0.0",
+  "description": "Telegram alerts when Claude finishes or needs permission, plus answer-from-phone via ask_user. Rewritten as a single static Go binary (v2). No Python or external dependencies required at runtime.",
   "author": { "name": "Daniil Ankushin" },
   "homepage": "https://github.com/AnkushinDaniil/noti",
   "repository": "https://github.com/AnkushinDaniil/noti",
@@ -13,6 +13,6 @@
     "bot_token": { "type": "string", "title": "Telegram Bot Token",
       "description": "Token from @BotFather (e.g. 123456789:AAH...).", "sensitive": true, "required": true },
     "chat_id": { "type": "string", "title": "Your Telegram Chat ID",
-      "description": "Auto-detected by /noti:setup after you DM your bot.", "required": true }
+      "description": "Auto-detected by `noti detect-chat` after you DM your bot.", "required": true }
   }
 }

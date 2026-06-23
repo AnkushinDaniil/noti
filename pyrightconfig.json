@@ -1,5 +1,0 @@
-{
-  "extraPaths": ["bin", "server"],
-  "pythonVersion": "3.9",
-  "reportMissingModuleSource": "none"
-}
