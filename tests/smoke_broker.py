@@ -92,7 +92,9 @@ def main():
 
     failures = []
     try:
-        health = wait_for_health(base, time.time() + 10)
+        # Generous startup budget: CI runners (notably macOS) can be slow to
+        # spawn the Python subprocess and bind the socket.
+        health = wait_for_health(base, time.time() + 60)
         assert health.get("version") == "3.0.0", "unexpected version: %r" % health
         print("ok: /health -> %s" % health)
 
@@ -115,7 +117,7 @@ def main():
 
         # Wait until the ticket is registered (pending count goes to 1).
         injected = False
-        deadline = time.time() + 8
+        deadline = time.time() + 20
         while time.time() < deadline:
             _, h = http_get(base + "/health", timeout=2)
             if h.get("pending", 0) >= 1:
