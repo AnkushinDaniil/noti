@@ -6,18 +6,56 @@ All notable changes to this project are documented here. This project adheres to
 ## [2.0.0] - unreleased
 
 Rewrote noti in Go as a single static binary (was Python+bash). Feature parity
-with 1.0.0. Adds the `ask` config block (modes wired in a later step).
+with 1.0.0. Adds dual-input `ask_user` (laptop elicitation + phone, first-wins),
+two configurable modes, hard-require elicitation enforcement, and a phone-first
+permission gate for tool-approval prompts.
 
 ### Added
 
 - **Single static Go binary** (`noti`) with subcommands: `broker`, `mcp`,
-  `notify <level>`, `detect-chat`, `test`, `version`, `help`.
+  `notify <level>`, `permission-gate`, `detect-chat`, `test`, `version`, `help`.
 - **`internal/broker`**: Go broker daemon replacing `bin/broker.py`. Same HTTP
   API (`/health`, `/notify`, `/ask`, `/wait`, `/cancel`, `/config`), same
   loopback singleton with PID lockfile and offset persistence.
 - **`internal/mcp`**: Go MCP stdio server replacing `server/mcp_server.py`.
   Same 5 tools (`ask_user`, `wait_for_reply`, `notify`, `send_file`,
-  `send_image`). Stores client elicitation capability flag for Step 2.
+  `send_image`).
+- **Dual-input `ask_user`**: sends the question to both the laptop (via MCP
+  `elicitation/create`) and the phone (via the broker); the first answer wins.
+  The loser is cancelled best-effort. Modes control when each source is started
+  (see below).
+- **Mode `timeout`** (default): question appears in Claude Code UI immediately;
+  after `idle_timeout_seconds` the phone is also notified. First answer wins.
+  A laptop decline escalates to the phone before the idle timer fires.
+- **Mode `forward-all`**: question sent to laptop and phone simultaneously.
+  First answer wins.
+- **Hard-require elicitation** (`require_laptop: true`, default): if the
+  connected Claude Code client does not advertise the `elicitation` capability,
+  `ask_user` returns an `isError` result asking the user to update Claude Code
+  (v2.1.76+). Set `require_laptop: false` to allow phone-only fallback instead.
+- **~50 s laptop window**: the laptop elicitation lives only during the
+  `ask_user` call. If neither source answers within ~50 s, the laptop prompt is
+  cancelled and `ask_user` returns a ticket for continued polling via
+  `wait_for_reply`.
+- **Lingering-laptop-prompt caveat**: the MCP spec says cancelling a shown
+  elicitation is `SHOULD`, not `MUST`. After the phone wins, the laptop prompt
+  may remain visible; any late laptop answer is silently dropped.
+- **Server-issued requests + cancellation**: the MCP server sends
+  `elicitation/create` as a JSON-RPC 2.0 server-originated request (id
+  `"noti-req-<n>"`); the response is routed via the `pending` map. A
+  `notifications/cancelled` notification is sent when the other source wins; a
+  `cancelled` id set prevents late responses from being acted on.
+- **Permission gate** (`noti permission-gate`, `bin/permission_gate.sh`): a
+  `PreToolUse` hook that sends an Allow/Deny question to the phone for the
+  configured gated tools. Sequential (phone-first, then terminal fallback on
+  timeout) — not first-wins (a protocol limit of the hook system). Always exits
+  0. Decision is emitted as
+  `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"|"deny"|"ask",...}}`.
+- **`permissions.tools`** config field: list of tool names whose
+  `PreToolUse` events are gated. Default: `["Bash","Write","Edit","NotebookEdit"]`.
+- **Per-project `routing[].ask` override**: a matching route's `ask` block is
+  merged on top of the global `ask` block, allowing per-project mode, timeout,
+  and permission settings.
 - **`internal/notify`**: `noti notify <level>` replaces the inline logic in
   `bin/notify.sh`. Reads hook JSON from stdin, POSTs to broker, falls back to
   direct Telegram send. Always exits 0.
@@ -26,13 +64,12 @@ with 1.0.0. Adds the `ask` config block (modes wired in a later step).
 - **`internal/telegram`**: stdlib-only Telegram Bot API client with test mode
   (no network; records sends to `Outbox`).
 - **`internal/version`**: `const Version = "2.0.0"`.
-- **`ask` config block**: `mode` (`timeout` / `forward-all`), `idle_timeout_seconds`,
-  `laptop`, `require_laptop`, `permissions`. Broker exposes `/config` to read
-  per-project resolved ask config. Modes and permission gate activate in Step 2.
 - **`scripts/build.sh`**: cross-platform build script (`go build -o bin/noti .`).
 - **CI**: GitHub Actions test matrix (ubuntu/macos, go vet + gofmt + go test)
   and cross-compile matrix (darwin/linux × amd64/arm64, uploaded as artifacts).
 - **`bin/notify.sh`**: simplified to a thin binary locator (`exec noti notify <level>`).
+- **`bin/permission_gate.sh`**: thin binary locator for the permission gate
+  (`exec noti permission-gate`); exits 0 (pass-through) if the binary is missing.
 - **`bin/install-broker.sh`** and **`bin/uninstall-broker.sh`**: updated to run
   `<binary> broker` instead of `python3 broker.py`.
 

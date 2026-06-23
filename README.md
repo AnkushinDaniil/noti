@@ -38,42 +38,50 @@ hooks and the MCP server.
 ## Architecture
 
 ```
-┌────────────────────────────────────────────────────────┐
-│  Claude Code session                                     │
-│                                                          │
-│  hooks/hooks.json ──► bin/notify.sh ──► broker /notify  │
-│                                                          │
-│  noti mcp  ◄──── stdio ──── Claude MCP client           │
-│      │                                                   │
-│      └──► broker /ask /wait /notify /send_file           │
-└───────────────────────────┬──────────────────────────-──┘
-                            │ HTTP loopback 127.0.0.1:7432
-                    ┌───────▼───────┐
-                    │  noti broker  │   (long-lived daemon)
-                    │               │
-                    │  HTTP server  │◄── /health /notify /ask /wait
-                    │  Telegram     │──► getUpdates (single consumer)
-                    │  poll loop    │
-                    └───────────────┘
-                            │
-                         Telegram
+┌──────────────────────────────────────────────────────────────┐
+│  Claude Code session                                          │
+│                                                               │
+│  hooks/hooks.json ──► bin/notify.sh       ──► broker /notify │
+│                   ──► bin/permission_gate.sh ► broker /ask   │
+│                                                               │
+│  noti mcp  ◄──── stdio ──── Claude MCP client                │
+│      │               elicitation/create ◄──┘                  │
+│      └──► broker /ask /wait /cancel /notify /send_file        │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ HTTP loopback 127.0.0.1:7432
+                       ┌───────▼───────┐
+                       │  noti broker  │   (long-lived daemon)
+                       │               │
+                       │  HTTP server  │◄── /health /notify /ask /wait /cancel /config
+                       │  Telegram     │──► getUpdates (single consumer)
+                       │  poll loop    │
+                       └───────────────┘
+                               │
+                            Telegram
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a deeper explanation.
 
-### Hooks (one-way alerts)
+### Hooks
 
-`hooks/hooks.json` registers two hooks:
+`hooks/hooks.json` registers three hooks:
 
-| Hook | Matcher | Level | When fired |
-|------|---------|-------|------------|
-| `Notification` | `permission_prompt` | `attention` | Claude pauses for your permission |
-| `Stop` | (any) | `done` | Claude finishes a turn |
+| Hook event | Matcher | Purpose |
+|------------|---------|---------|
+| `Notification` | `permission_prompt` | Sends a Telegram alert when Claude pauses for permission |
+| `Stop` | (any) | Sends a Telegram alert when Claude finishes a turn |
+| `PreToolUse` | gated tools (`Bash`, `Write`, `Edit`, `NotebookEdit`) | Phone-first permission gate |
 
-`bin/notify.sh` is a thin locator script that finds the `noti` binary and
-calls `noti notify <level>`. The binary reads the hook JSON from stdin, builds
-a short message, POSTs it to the broker (5-second timeout), and falls back to a
-direct Telegram `sendMessage` if the broker is unreachable. Always exits 0.
+**Alert hooks** (`Notification`, `Stop`): `bin/notify.sh` is a thin locator script that
+finds the `noti` binary and calls `noti notify <level>`. The binary reads the hook JSON
+from stdin, builds a short message, POSTs it to the broker (5-second timeout), and falls
+back to a direct Telegram `sendMessage` if the broker is unreachable. Always exits 0.
+
+**Permission gate** (`PreToolUse`): `bin/permission_gate.sh` calls `noti permission-gate`.
+The binary reads the hook JSON from stdin, sends an Allow/Deny question to the phone, and
+returns a permission decision on stdout. If the broker is unreachable or the timeout
+elapses, it emits a pass-through so Claude falls back to the normal terminal prompt.
+Always exits 0.
 
 ### Broker daemon (single getUpdates owner)
 
@@ -110,24 +118,115 @@ all tool calls to the broker over HTTP. **Never touches the bot token.**
     "idle_timeout_seconds": 30,
     "laptop": true,
     "require_laptop": true,
-    "permissions": { "enabled": true, "timeout_seconds": 30 }
+    "permissions": {
+      "enabled": true,
+      "timeout_seconds": 30,
+      "tools": ["Bash", "Write", "Edit", "NotebookEdit"]
+    }
   }
 }
 ```
 
-The `ask` block is wired in now; the two modes (`timeout` / `forward-all`) and
-the permission gate become active in v2 Step 2.
-
 Config path can be overridden with the `NOTI_CONFIG` environment variable.
+
+### The `ask` config block
+
+The `ask` block controls how `ask_user` delivers questions and how permission
+prompts are gated. All fields have defaults and can be overridden per-project
+(see [Per-project routing](#per-project-routing) below).
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `mode` | `"timeout"` | `"timeout"` or `"forward-all"` — see [Two modes](#two-modes) |
+| `idle_timeout_seconds` | `30` | Seconds before escalating to phone in `timeout` mode (clamped 1–50) |
+| `laptop` | `true` | Whether to show the question in the Claude Code UI via MCP elicitation |
+| `require_laptop` | `true` | If `true` and the client does not support elicitation, `ask_user` returns an error instead of falling back silently |
+| `permissions.enabled` | `true` | Enable the phone-first permission gate for tool-approval prompts |
+| `permissions.timeout_seconds` | `30` | How long the gate waits for a phone response before falling back to the normal terminal prompt |
+| `permissions.tools` | `["Bash","Write","Edit","NotebookEdit"]` | Tools whose permission prompts are sent to the phone |
+
+### Two modes
+
+`ask_user` sends the question to **both** the laptop (via MCP elicitation) and
+the phone (via the broker), subject to the configured mode. The first answer
+wins; the other input is cancelled (best-effort).
+
+**`timeout` (default)**
+
+The question appears in the Claude Code terminal UI immediately. If you do not
+answer within `idle_timeout_seconds`, the question is also sent to your phone.
+If you then answer on the phone, that wins. If you later answer on the laptop,
+the late answer is silently dropped.
+
+**`forward-all`**
+
+The question is sent to both the laptop and the phone at the same time. Whichever
+you answer first wins; the other is cancelled.
+
+### Laptop elicitation and the ~50 s window
+
+The laptop prompt is delivered via MCP's `elicitation/create` and lives only
+for the duration of the `ask_user` tool call — roughly 50 seconds (safely under
+Claude Code's ~60 s tool-call ceiling). If neither source answers within 50 s,
+the laptop prompt is cancelled and `ask_user` returns a ticket so you can
+continue waiting on the phone via `wait_for_reply`.
+
+**Lingering-laptop caveat:** the MCP specification says cancelling a shown
+elicitation is `SHOULD`, not `MUST`. When the phone wins, the laptop prompt
+*may* remain visible until you dismiss it. Any late answer from the laptop is
+silently dropped — the first-wins outcome is already committed.
+
+### Hard-require elicitation
+
+When `require_laptop` is `true` (the default) and the connected Claude Code
+client does **not** advertise the `elicitation` capability (requires Claude Code
+v2.1.76+), `ask_user` returns an error:
+
+> noti needs Claude Code with MCP elicitation (v2.1.76+). Update Claude Code,
+> or set ask.require_laptop=false for phone-only.
+
+This is intentional — noti will not silently downgrade to phone-only when you
+expect the dual-input race. Set `require_laptop: false` to explicitly opt in to
+phone-only operation on older clients.
+
+### Phone-first permission gate
+
+When `permissions.enabled` is `true`, a `PreToolUse` hook intercepts calls to
+the tools listed in `permissions.tools`. The flow is sequential (not
+first-wins — a protocol limit of the hook system):
+
+1. The hook POSTs the tool name and a short summary of its input to the broker.
+2. The broker sends an **Allow / Deny** question to your phone.
+3. If you answer **Allow** within `permissions.timeout_seconds`, the tool
+   proceeds. If you answer **Deny**, the tool is blocked with a reason. If the
+   timeout elapses or the broker is unreachable, the normal terminal prompt is
+   shown (pass-through — Claude is never blocked indefinitely).
+
+The gate always exits 0 and never crashes a Claude session.
 
 ### Per-project routing
 
-Route different projects to different chats:
+Route different projects to different chats, and optionally override `ask`
+settings per project:
 
 ```json
 "routing": [
-  { "match": "my-secret-proj", "channel": "telegram", "chat_id": "111222333", "match_type": "project" },
-  { "match": "/work/client-*", "channel": "telegram", "chat_id": "444555666", "match_type": "path_glob" }
+  {
+    "match": "my-secret-proj",
+    "channel": "telegram",
+    "chat_id": "111222333",
+    "match_type": "project"
+  },
+  {
+    "match": "/work/client-*",
+    "channel": "telegram",
+    "chat_id": "444555666",
+    "match_type": "path_glob",
+    "ask": {
+      "mode": "forward-all",
+      "permissions": { "enabled": false }
+    }
+  }
 ]
 ```
 
@@ -135,7 +234,9 @@ Route different projects to different chats:
 - `"project"` — matches `basename(cwd)` exactly (default)
 - `"path_glob"` — `filepath.Match` on the full `cwd` path
 
-First match wins; if nothing matches, the telegram default is used.
+First match wins; if nothing matches, the telegram default is used. The `ask`
+override in a matching route is merged on top of the global `ask` block —
+only fields you set are changed.
 
 ---
 
@@ -143,8 +244,8 @@ First match wins; if nothing matches, the telegram default is used.
 
 | Tool | Description |
 |------|-------------|
-| `ask_user` | Ask the human a question; returns the answer or a ticket. Use INSTEAD of guessing or stopping. |
-| `wait_for_reply` | Continue waiting for a phone reply. Call with the ticket until answered. |
+| `ask_user` | Ask the human a question. Shows the question on the laptop (MCP elicitation) AND the phone; the first answer wins. Returns the answer directly, or a ticket if neither source replied within the ~50 s window. |
+| `wait_for_reply` | Continue waiting for a phone reply. Call with the ticket returned by `ask_user` until answered. |
 | `notify` | Proactively send a short status update to the user's phone. |
 | `send_file` | Send a file or document to the user's phone. |
 | `send_image` | Send an image to the user's phone. |
@@ -190,6 +291,7 @@ OUT="${CLAUDE_PLUGIN_DATA:-${HOME}/.local/state/noti}/bin/noti" bash scripts/bui
 noti broker              Start the background broker daemon
 noti mcp                 Start the MCP stdio server
 noti notify <level>      Send a hook notification (stdin: hook JSON)
+noti permission-gate     PreToolUse hook: phone-first permission gate (stdin: hook JSON)
 noti detect-chat         Print the most recent Telegram chat ID (setup helper)
 noti test [text]         Send a test notification
 noti version             Print version
@@ -230,6 +332,19 @@ noti help                Print usage
 - After a plugin update, re-run `/noti:setup` or `install-broker.sh` to refresh
   the service path (`CLAUDE_PLUGIN_ROOT` changes with each update).
 - Pre-built release binaries (no Go required) land in v2 Step 3.
+- **Lingering laptop prompt:** when the phone answers first, the MCP elicitation
+  prompt in the Claude Code UI may linger until you dismiss it. Any subsequent
+  laptop answer is silently dropped.
+- **Laptop window is ~50 s:** if neither input source answers within 50 s,
+  `ask_user` returns a ticket and you must call `wait_for_reply` to keep
+  waiting on the phone. The laptop prompt is cancelled at that point.
+- **Permission gate is sequential, not first-wins:** true simultaneous
+  first-wins for permission prompts is not possible with the Claude Code hook
+  protocol (a hook is block-or-pass-through, not a race). Permissions are
+  phone-first, then fall through to the normal terminal prompt on timeout.
+- **Elicitation requires Claude Code v2.1.76+.** With `require_laptop: true`
+  (the default), `ask_user` returns an error on older clients. Set
+  `require_laptop: false` to use phone-only mode instead.
 
 ---
 

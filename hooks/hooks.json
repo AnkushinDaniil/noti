@@ -1,6 +1,11 @@
 {
   "description": "Noti: phone alerts on permission prompts and turn completion",
   "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash|Write|Edit|NotebookEdit",
+        "hooks": [ { "type": "command",
+          "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/permission_gate.sh" } ] }
+    ],
     "Notification": [
       { "matcher": "permission_prompt",
         "hooks": [ { "type": "command",

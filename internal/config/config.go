@@ -24,9 +24,14 @@ type Channels struct {
 
 // Permissions configures the (Step 2) permission-gate behavior.
 type Permissions struct {
-	Enabled        bool `json:"enabled"`
-	TimeoutSeconds int  `json:"timeout_seconds"`
+	Enabled        bool     `json:"enabled"`
+	TimeoutSeconds int      `json:"timeout_seconds"`
+	Tools          []string `json:"tools"`
 }
+
+// DefaultGatedTools is the built-in set of tools the permission-gate routes to
+// the phone when no explicit tools list is configured.
+var DefaultGatedTools = []string{"Bash", "Write", "Edit", "NotebookEdit"}
 
 // Ask configures the question/answer behavior. Pointer fields distinguish
 // "unset" (nil, inherit from a lower-priority layer) from an explicit value.
@@ -74,7 +79,11 @@ func defaultAsk() Ask {
 		IdleTimeoutSeconds: 30,
 		Laptop:             boolPtr(true),
 		RequireLaptop:      boolPtr(true),
-		Permissions:        &Permissions{Enabled: true, TimeoutSeconds: 30},
+		Permissions: &Permissions{
+			Enabled:        true,
+			TimeoutSeconds: 30,
+			Tools:          append([]string(nil), DefaultGatedTools...),
+		},
 	}
 }
 
@@ -164,6 +173,14 @@ func (c *Config) ResolveAsk(project string) Ask {
 	mergeAsk(&result, c.Ask)
 	if r := c.matchRoute(project); r != nil {
 		mergeAsk(&result, r.Ask)
+	}
+	// Guarantee the permission-gate has a non-empty gated tool set even when a
+	// config layer supplied a Permissions block without a tools list.
+	if result.Permissions == nil {
+		result.Permissions = &Permissions{Enabled: true, TimeoutSeconds: 30}
+	}
+	if len(result.Permissions.Tools) == 0 {
+		result.Permissions.Tools = append([]string(nil), DefaultGatedTools...)
 	}
 	return result
 }

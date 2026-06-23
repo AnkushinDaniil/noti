@@ -21,6 +21,7 @@ func newServer(out io.Writer, brokerURL string) *server {
 		brokerURL: strings.TrimRight(brokerURL, "/"),
 		httpc:     &http.Client{Timeout: 5 * time.Second},
 		pending:   make(map[string]chan rpcRequest),
+		cancelled: make(map[string]bool),
 	}
 }
 
@@ -218,6 +219,25 @@ func TestToolsList(t *testing.T) {
 func stubBroker(t *testing.T, askStatus, waitStatus, answer string) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
+	// Phone-only config (laptop disabled) so ask_user goes straight to the
+	// broker without requiring an elicitation-capable client.
+	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		laptop := false
+		requireLaptop := false
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ask": map[string]any{
+				"mode":                 "timeout",
+				"idle_timeout_seconds": 1,
+				"laptop":               laptop,
+				"require_laptop":       requireLaptop,
+			},
+		})
+	})
+	mux.HandleFunc("/cancel", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	})
 	mux.HandleFunc("/ask", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ticket": "T123", "status": askStatus})
@@ -277,6 +297,7 @@ func TestAskUserAnswered(t *testing.T) {
 func TestAskUserPendingHandsBackTicket(t *testing.T) {
 	broker := stubBroker(t, "pending", "pending", "")
 	s := newServer(nil, broker.URL)
+	s.askCeiling = 200 * time.Millisecond
 	d := newDriver(t, s)
 	defer d.close()
 

@@ -12,8 +12,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AnkushinDaniil/noti/internal/version"
@@ -58,13 +60,22 @@ type server struct {
 	httpc     *http.Client
 
 	// clientElicitation records whether the client advertised an elicitation
-	// capability during initialize. Stored for Step 2 (unused now).
+	// capability during initialize.
 	clientElicitation bool
 
+	// askCeiling bounds how long callAskUser waits for a winner before handing
+	// back the phone ticket. Zero means the default (askCeiling const). Settable
+	// for tests; in production it stays under Claude's ~60s call timeout.
+	askCeiling time.Duration
+
+	// reqSeq generates monotonically increasing server-issued request ids.
+	reqSeq atomic.Int64
+
 	// pending maps a server-issued request id to a channel awaiting its
-	// response. Infrastructure for Step 2 elicitation; unused now.
+	// response. cancelled records ids whose late responses must be dropped.
 	pendingMu sync.Mutex
 	pending   map[string]chan rpcRequest
+	cancelled map[string]bool
 }
 
 // Run starts the MCP stdio server, reading from os.Stdin and writing to
@@ -84,6 +95,7 @@ func Run() error {
 		brokerURL: brokerURL,
 		httpc:     &http.Client{Timeout: brokerClientTimeout},
 		pending:   make(map[string]chan rpcRequest),
+		cancelled: make(map[string]bool),
 	}
 	return s.serve(os.Stdin)
 }
@@ -129,10 +141,15 @@ func (s *server) serve(r io.Reader) error {
 }
 
 // routeResponse delivers a server-issued request's response to its waiter, if
-// any. Infrastructure for Step 2 elicitation.
+// any. Responses whose id has been cancelled (the loser of a first-wins race)
+// are dropped silently.
 func (s *server) routeResponse(msg rpcRequest) {
 	key := string(msg.ID)
 	s.pendingMu.Lock()
+	if s.cancelled[key] {
+		s.pendingMu.Unlock()
+		return
+	}
 	ch, ok := s.pending[key]
 	if ok {
 		delete(s.pending, key)
@@ -141,6 +158,53 @@ func (s *server) routeResponse(msg rpcRequest) {
 	if ok {
 		ch <- msg
 	}
+}
+
+// sendServerRequest issues a JSON-RPC request to the client and returns a
+// channel that receives the routed response and a cancel func. The id is a
+// JSON string "noti-req-<n>"; the channel is buffered so routeResponse never
+// blocks. cancel sends notifications/cancelled, records the id in the
+// cancelled set (so a late response is dropped), and removes the pending entry.
+func (s *server) sendServerRequest(method string, params any) (<-chan rpcRequest, func()) {
+	n := s.reqSeq.Add(1)
+	id := "noti-req-" + strconv.FormatInt(n, 10)
+	key := strconv.Quote(id) // pending/cancelled keys match the raw JSON id
+
+	ch := make(chan rpcRequest, 1)
+	s.pendingMu.Lock()
+	s.pending[key] = ch
+	s.pendingMu.Unlock()
+
+	s.writeRaw(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+		"params":  params,
+	})
+
+	var once sync.Once
+	cancel := func() {
+		once.Do(func() {
+			s.pendingMu.Lock()
+			s.cancelled[key] = true
+			delete(s.pending, key)
+			s.pendingMu.Unlock()
+			s.sendNotification("notifications/cancelled", map[string]any{
+				"requestId": id,
+				"reason":    "answered elsewhere",
+			})
+		})
+	}
+	return ch, cancel
+}
+
+// sendNotification writes a fire-and-forget JSON-RPC notification (no id).
+func (s *server) sendNotification(method string, params any) {
+	s.writeRaw(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  params,
+	})
 }
 
 // dispatch routes a request or notification to its handler.
@@ -230,5 +294,22 @@ func (s *server) write(resp rpcResponse) {
 	defer s.writeMu.Unlock()
 	if _, err := s.out.Write(data); err != nil {
 		log.Printf("failed to write response: %v", err)
+	}
+}
+
+// writeRaw serializes an arbitrary JSON-RPC message (request or notification)
+// to a single newline-delimited line on stdout, guarded by the same mutex as
+// write so server-issued requests never interleave with tool responses.
+func (s *server) writeRaw(msg map[string]any) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("failed to marshal message: %v", err)
+		return
+	}
+	data = append(data, '\n')
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if _, err := s.out.Write(data); err != nil {
+		log.Printf("failed to write message: %v", err)
 	}
 }

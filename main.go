@@ -5,6 +5,7 @@
 //	broker         start the broker daemon (blocks)
 //	mcp            start the MCP stdio server (blocks)
 //	notify <level> fire a hook notification (reads JSON from stdin)
+//	permission-gate phone-first PreToolUse permission gate (reads JSON from stdin)
 //	detect-chat    print the most recent private Telegram chat ID (setup helper)
 //	test [text]    send a test notification
 //	version        print the version string
@@ -20,6 +21,7 @@ import (
 	"github.com/AnkushinDaniil/noti/internal/config"
 	"github.com/AnkushinDaniil/noti/internal/mcp"
 	"github.com/AnkushinDaniil/noti/internal/notify"
+	"github.com/AnkushinDaniil/noti/internal/permission"
 	"github.com/AnkushinDaniil/noti/internal/telegram"
 	"github.com/AnkushinDaniil/noti/internal/version"
 )
@@ -61,6 +63,14 @@ func run(args []string) error {
 			return err
 		}
 		return notify.Run(cfg, level, os.Stdin)
+
+	case "permission-gate":
+		cfg, err := loadConfig()
+		if err != nil {
+			// Never block the tool: emit a pass-through decision and exit 0.
+			cfg = &config.Config{}
+		}
+		return permission.Run(cfg, os.Stdin, os.Stdout)
 
 	case "detect-chat":
 		return detectChat()
@@ -155,6 +165,7 @@ Usage:
   noti broker              Start the background broker daemon
   noti mcp                 Start the MCP stdio server
   noti notify <level>      Send a hook notification (stdin: hook JSON)
+  noti permission-gate     Phone-first permission gate (PreToolUse hook; stdin: hook JSON)
   noti detect-chat         Print the most recent Telegram chat ID
   noti test [text]         Send a test notification
   noti version             Print version
