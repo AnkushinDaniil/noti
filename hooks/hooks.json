@@ -1,0 +1,14 @@
+{
+  "description": "Noti: phone alerts on permission prompts and turn completion",
+  "hooks": {
+    "Notification": [
+      { "matcher": "permission_prompt",
+        "hooks": [ { "type": "command",
+          "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/notify.sh attention" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command",
+          "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/notify.sh done" } ] }
+    ]
+  }
+}

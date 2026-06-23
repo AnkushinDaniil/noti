@@ -1,0 +1,29 @@
+# Logs
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# Local config (never commit secrets)
+config.json
+*.env
+.env
+.env.*
+
+# Broker runtime state
+*.offset
+*.lock
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Tooling / agent state
+.omc/

@@ -1,0 +1,11 @@
+{
+  "name": "noti-marketplace",
+  "owner": { "name": "Daniil Ankushin" },
+  "plugins": [
+    { "name": "noti",
+      "source": { "source": "github", "repo": "AnkushinDaniil/noti" },
+      "description": "Phone notifications + answer-from-phone for Claude Code.",
+      "version": "3.0.0", "license": "MIT",
+      "keywords": ["telegram","notification","phone"], "category": "productivity" }
+  ]
+}
