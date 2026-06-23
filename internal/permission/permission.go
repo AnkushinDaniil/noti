@@ -13,10 +13,13 @@
 //	         "tool_input":{...},"cwd":"...","session_id":"...",
 //	         "transcript_path":"...","permission_mode":"..."}
 //	stdout: {"hookSpecificOutput":{"hookEventName":"PreToolUse",
-//	         "permissionDecision":"allow"|"deny"|"ask",
+//	         "permissionDecision":"allow"|"deny",
 //	         "permissionDecisionReason":"..."}}
 //
-// "ask" defers to the normal terminal permission prompt (pass-through).
+// IMPORTANT: pass-through emits NOTHING (empty stdout), NOT permissionDecision
+// "ask". "ask" would FORCE a prompt even in auto/acceptEdits modes (overriding
+// auto-approval); emitting nothing lets Claude Code's normal permission flow
+// (mode + allowlist) decide. A decision is emitted only on a real phone Allow/Deny.
 package permission
 
 import (
@@ -38,7 +41,6 @@ const (
 
 	decisionAllow = "allow"
 	decisionDeny  = "deny"
-	decisionAsk   = "ask" // pass-through to the normal terminal prompt
 
 	// brokerAskTimeout bounds a single broker HTTP call.
 	brokerAskTimeout = 5 * time.Second
@@ -76,14 +78,14 @@ type waitResponse struct {
 	Answer string `json:"answer"`
 }
 
-// Run reads the PreToolUse hook payload from in, decides allow/deny/ask, and
-// writes the decision JSON to out. It always returns nil: the gate must never
-// break a Claude turn. The caller (main) exits 0 regardless.
+// Run reads the PreToolUse hook payload from in and either writes an allow/deny
+// decision JSON to out (only on a real phone answer) or emits nothing
+// (pass-through). It always returns nil: the gate must never break a Claude turn.
+// The caller (main) exits 0 regardless.
 func Run(cfg *config.Config, in io.Reader, out io.Writer) error {
 	input, err := parse(in)
 	if err != nil {
-		// Unparseable stdin: pass through, never block.
-		writeDecision(out, decisionAsk, "")
+		// Unparseable stdin: pass through silently (emit nothing).
 		return nil
 	}
 
@@ -99,7 +101,8 @@ func Run(cfg *config.Config, in io.Reader, out io.Writer) error {
 	//     asking the phone is both wrong and noisy. Only "default" mode prompts.
 	if perms == nil || !perms.Enabled || !gated(perms.Tools, input.ToolName) ||
 		input.PermissionMode != "default" {
-		writeDecision(out, decisionAsk, "")
+		// Pass through: emit nothing so Claude Code's normal permission flow
+		// applies (auto/acceptEdits/etc. auto-approve; only "default" prompts).
 		return nil
 	}
 
@@ -109,14 +112,18 @@ func Run(cfg *config.Config, in io.Reader, out io.Writer) error {
 		timeout = 30
 	}
 
-	decision, reason := gate(brokerURL, input, project, timeout)
-	writeDecision(out, decision, reason)
+	// Emit a decision ONLY on a real phone Allow/Deny; otherwise pass through
+	// (emit nothing) so we never force a prompt that auto-mode would have skipped.
+	if decision, reason := gate(brokerURL, input, project, timeout); decision != "" {
+		writeDecision(out, decision, reason)
+	}
 	return nil
 }
 
 // gate performs the phone-first permission flow: POST /ask, then poll /wait up
-// to timeout seconds. Returns the decision and an optional reason. Any broker
-// failure, timeout, or unrecognized answer yields a pass-through ("ask").
+// to timeout seconds. Returns ("allow"|"deny", reason) only on a real phone
+// answer; any broker failure, timeout, or unrecognized answer returns ("", "")
+// meaning pass-through (the caller emits nothing).
 func gate(brokerURL string, input hookInput, project string, timeout int) (string, string) {
 	question := fmt.Sprintf("Allow %s? %s", input.ToolName, summarize(input.ToolName, input.ToolInput))
 
@@ -126,7 +133,7 @@ func gate(brokerURL string, input hookInput, project string, timeout int) (strin
 		"options":  []string{"Allow", "Deny"},
 		"project":  project,
 	}, &ask); err != nil || ask.Ticket == "" {
-		return decisionAsk, ""
+		return "", ""
 	}
 
 	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
@@ -137,7 +144,7 @@ func gate(brokerURL string, input hookInput, project string, timeout int) (strin
 			"timeout": waitPollSeconds,
 		}, &w); err != nil {
 			// Broker became unreachable mid-poll: pass through.
-			return decisionAsk, ""
+			return "", ""
 		}
 		if w.Status == "answered" {
 			switch strings.TrimSpace(w.Answer) {
@@ -146,16 +153,16 @@ func gate(brokerURL string, input hookInput, project string, timeout int) (strin
 			case "Deny":
 				return decisionDeny, "Denied from phone"
 			default:
-				return decisionAsk, ""
+				return "", ""
 			}
 		}
 		if w.Status == "unknown_ticket" {
-			return decisionAsk, ""
+			return "", ""
 		}
 		// "pending": keep polling until the deadline.
 	}
-	// Timed out waiting for a phone answer: defer to the terminal prompt.
-	return decisionAsk, ""
+	// Timed out waiting for a phone answer: pass through to normal flow.
+	return "", ""
 }
 
 // parse decodes the hook JSON from r.

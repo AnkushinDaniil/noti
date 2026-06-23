@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.2] - 2026-06-23
+
+### Fixed
+- The permission gate's pass-through emitted `permissionDecision: "ask"`, which
+  **forces** a confirmation prompt even in auto/acceptEdits modes (overriding
+  auto-approval) — so enabling the gate produced extra laptop prompts that should
+  have been auto-approved. Pass-through now emits **nothing**, letting Claude
+  Code's normal permission flow apply; a decision is sent only on a real phone
+  Allow/Deny. (The gate is off by default; this matters when it is opted in.)
+
 ## [2.0.1] - 2026-06-23
 
 ### Changed
