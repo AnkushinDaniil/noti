@@ -3,31 +3,25 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [3.0.0] — 2026-06-23
+## [1.0.0] — 2026-06-23
 
-Initial public release.
+Initial release: **one-way phone notifications**.
 
 ### Added
 
-- **One-way notifications** via Claude Code hooks: `Notification`
-  (`permission_prompt`) and `Stop`, delivered to the phone through `bin/notify.sh`.
-- **Two-way "answer from phone"** via an MCP server (`server/mcp_server.py`,
-  hand-rolled JSON-RPC 2.0 over stdio) exposing `ask_user`, `wait_for_reply`,
-  `notify`, `send_file`, and `send_image`.
-- **Broker daemon** (`bin/broker.py`): the single `getUpdates` consumer, loopback
-  HTTP API (`/health`, `/notify`, `/ask`, `/wait`, `/send_file`), thread-safe
-  ticket registry, offset persistence, and a PID-lockfile singleton guard.
-- **Multi-channel delivery**: Telegram (two-way, inline buttons), Discord and
-  Slack (one-way webhooks).
-- **Per-project routing** in `~/.config/noti/config.json` by project name or path
-  glob.
-- **Onboarding**: `/noti:setup` skill and `bin/install-broker.sh` /
-  `bin/uninstall-broker.sh` for launchd (macOS) and systemd `--user` (Linux).
-- **Tests**: offline smoke tests for the broker and the MCP handshake
-  (`tests/run_tests.sh`).
-- Documentation: README, `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`.
+- Claude Code hooks that fire a phone notification:
+  - `Notification` (matcher `permission_prompt`) — Claude is waiting for your approval.
+  - `Stop` — Claude finished a turn.
+- `bin/notify.sh` — sends the alert to Telegram via the Bot API. Reads credentials
+  from the plugin's `userConfig` (env) or `~/.config/noti/config.json`. Degrades
+  gracefully without `jq` and always exits 0 so it can never break a Claude turn.
+- `/noti:setup` — interactive onboarding (create a bot, detect chat ID, send a
+  test message).
+- Offline test suite (`tests/run_tests.sh`) and CI on Linux + macOS.
 
 ### Notes
 
-- Zero runtime dependencies — Python 3.9+ standard library and `bash`/`curl` only.
-- Single-tenant by design: each user runs their own Telegram bot.
+- Zero dependencies: `bash` + `curl` (plus optional `jq`). No daemon, no Python.
+- One-way only. Answering Claude's questions from your phone is planned — see
+  [docs/ROADMAP.md](docs/ROADMAP.md). A working prototype lives on the
+  `wip/v3-full` branch.

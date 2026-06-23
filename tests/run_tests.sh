@@ -1,109 +1,58 @@
 #!/usr/bin/env bash
-#
-# Noti test runner. Runs static checks and offline smoke tests against the
-# whole plugin. Exits non-zero on the first failure category encountered, but
-# attempts all checks so the output is informative. Requires only python3 and
-# bash (stdlib + coreutils); no pip/npm.
-#
+# noti v1 offline test suite: JSON validation, shell syntax, and a dry-run of
+# notify.sh. No network, no Telegram bot required.
 set -uo pipefail
+cd "$(dirname "$0")/.."
 
-# Resolve repo root from this script's location.
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "${HERE}/.." && pwd)"
-cd "${ROOT}"
+FAILED=0
+ok()   { echo "ok: $*"; }
+fail() { echo "FAIL: $*" >&2; FAILED=1; }
 
-FAIL=0
-fail() {
-  echo "FAIL: $*" >&2
-  FAIL=1
-}
-ok() {
-  echo "ok: $*"
-}
-
-# Resolve a working python3. Prefer $PYTHON, then a bare python3, but if that
-# bare name is a non-functional wrapper/shim (cannot run `-m py_compile`), fall
-# back to common real interpreter locations. Stdlib-only; no pip/uv required.
-pick_python() {
-  local cand
-  for cand in "${PYTHON:-}" python3 /usr/bin/python3 /usr/local/bin/python3 python; do
-    [ -z "${cand}" ] && continue
-    command -v "${cand}" >/dev/null 2>&1 || continue
-    if "${cand}" -c 'import py_compile, json' >/dev/null 2>&1; then
-      echo "${cand}"
-      return 0
-    fi
-  done
-  # Last resort: return the bare name so the failure is visible.
-  echo "${PYTHON:-python3}"
-}
-PY="$(pick_python)"
-echo "using python: ${PY}"
-
-echo "== py_compile =="
-PY_FILES=(
-  "bin/broker.py"
-  "bin/noti_channels.py"
-  "bin/noti"
-  "server/mcp_server.py"
-  "tests/smoke_broker.py"
-  "tests/smoke_mcp.py"
-)
-for f in "${PY_FILES[@]}"; do
-  if [ ! -f "${f}" ]; then
-    fail "missing python file: ${f}"
-    continue
-  fi
-  if "${PY}" -m py_compile "${f}"; then
-    ok "py_compile ${f}"
-  else
-    fail "py_compile ${f}"
-  fi
+# Pick a working python for JSON validation (some machines shim bare `python3`).
+PY=""
+for c in "${PYTHON:-}" python3 /usr/bin/python3 /usr/local/bin/python3 python; do
+  [ -n "$c" ] || continue
+  command -v "$c" >/dev/null 2>&1 || continue
+  "$c" -c 'import json' >/dev/null 2>&1 && { PY="$c"; break; }
 done
 
 echo "== json validation =="
-# Validate every tracked JSON file in the repo.
-while IFS= read -r jf; do
-  if "${PY}" -m json.tool "${jf}" >/dev/null; then
-    ok "json ${jf}"
+for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json; do
+  if [ -n "$PY" ]; then
+    "$PY" -m json.tool "$f" >/dev/null 2>&1 && ok "json $f" || fail "json $f"
+  elif command -v jq >/dev/null 2>&1; then
+    jq . "$f" >/dev/null 2>&1 && ok "json $f" || fail "json $f"
   else
-    fail "json ${jf}"
+    echo "skip: json $f (no python or jq)"
   fi
-done < <(find . -type f -name '*.json' -not -path './.git/*' -not -path './.omc/*' -not -path '*/__pycache__/*')
+done
 
 echo "== bash -n =="
-while IFS= read -r sf; do
-  if bash -n "${sf}"; then
-    ok "bash -n ${sf}"
-  else
-    fail "bash -n ${sf}"
-  fi
-done < <(find . -type f -name '*.sh' -not -path './.git/*')
+for f in bin/notify.sh tests/run_tests.sh; do
+  bash -n "$f" && ok "bash -n $f" || fail "bash -n $f"
+done
 
-echo "== smoke_broker.py =="
-if [ -f "tests/smoke_broker.py" ]; then
-  if "${PY}" tests/smoke_broker.py; then
-    ok "smoke_broker"
-  else
-    fail "smoke_broker"
-  fi
-else
-  fail "missing tests/smoke_broker.py"
-fi
+echo "== notify.sh dry-run =="
+OUT="$(printf '%s' '{"hook_event_name":"Stop","cwd":"/tmp/myproj","message":""}' \
+  | NOTI_DRY_RUN=1 CLAUDE_PLUGIN_OPTION_BOT_TOKEN=SECRET123 CLAUDE_PLUGIN_OPTION_CHAT_ID=42 \
+    bash bin/notify.sh done 2>&1)"
+echo "  $OUT"
+case "$OUT" in
+  *"chat_id=42"*) ok "dry-run routes to chat_id" ;;
+  *)              fail "dry-run missing chat_id: $OUT" ;;
+esac
+case "$OUT" in
+  *"✅"*) ok "dry-run uses the 'done' label" ;;
+  *)      fail "dry-run wrong label: $OUT" ;;
+esac
+case "$OUT" in
+  *SECRET123*) fail "bot token leaked into dry-run output" ;;
+  *)           ok "bot token not leaked" ;;
+esac
 
-echo "== smoke_mcp.py =="
-if [ -f "tests/smoke_mcp.py" ]; then
-  if "${PY}" tests/smoke_mcp.py; then
-    ok "smoke_mcp"
-  else
-    fail "smoke_mcp"
-  fi
-else
-  fail "missing tests/smoke_mcp.py"
+if [ "$FAILED" = "0" ]; then
+  echo "ALL TESTS PASSED"
+  exit 0
 fi
-
-if [ "${FAIL}" -ne 0 ]; then
-  echo "TESTS FAILED" >&2
-  exit 1
-fi
-echo "ALL TESTS PASSED"
+echo "TESTS FAILED"
+exit 1
