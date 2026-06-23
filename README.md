@@ -9,9 +9,11 @@ external runtime dependencies.
 
 ## Prerequisites
 
-- **Go 1.23+** — to build the binary from source (a pre-built download will be
-  available in Step 3 of the roadmap)
-- **curl** — optional; used in `notify.sh` fallback path
+- **None for most users** — `/noti:setup` downloads a prebuilt static binary for
+  your platform (macOS/Linux, amd64/arm64) from GitHub Releases.
+- **Go 1.23+** — optional; only used as a source-build fallback if the download
+  fails or your platform has no prebuilt binary.
+- **curl** — used to download the binary and in the `notify.sh` fallback path.
 
 ## Quick Install
 
@@ -22,10 +24,10 @@ external runtime dependencies.
 ```
 
 `/noti:setup` is an interactive runbook that:
-1. Checks Go is installed
+1. Checks `curl` is available
 2. Creates a Telegram bot via @BotFather
 3. Writes `~/.config/noti/config.json` (chmod 600)
-4. Builds the `noti` binary via `scripts/build.sh`
+4. Downloads the `noti` binary via `scripts/fetch-binary.sh` (source-build fallback)
 5. Auto-detects your chat ID via `noti detect-chat`
 6. Sends a test message via `noti test`
 7. Installs the broker daemon (launchd on macOS, systemd --user on Linux)

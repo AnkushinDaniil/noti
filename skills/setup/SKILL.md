@@ -80,17 +80,19 @@ echo "Config written to ${CONFIG_PATH}"
 
 ---
 
-## Step 4 — Build the noti binary
+## Step 4 — Install the noti binary
 
-Build the static Go binary and install it into the data directory:
+Download the prebuilt binary into the data directory. No Go toolchain is needed;
+the script falls back to building from source if Go is present and the download
+fails:
 
 ```bash
-DATA_DIR="${CLAUDE_PLUGIN_DATA:-${HOME}/.local/state/noti}"
-export OUT="${DATA_DIR}/bin/noti"
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/build.sh"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/fetch-binary.sh"
 ```
 
-If the build fails, show the error and tell the user to check that Go 1.23+ is installed and `go env GOROOT` is set.
+If both the download and the source build fail, show the error and tell the user
+to check their network (or that a release exists), or to install Go 1.23+ for the
+source fallback.
 
 ---
 

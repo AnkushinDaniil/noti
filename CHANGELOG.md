@@ -3,12 +3,14 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [2.0.0] - unreleased
+## [2.0.0] - 2026-06-23
 
 Rewrote noti in Go as a single static binary (was Python+bash). Feature parity
 with 1.0.0. Adds dual-input `ask_user` (laptop elicitation + phone, first-wins),
 two configurable modes, hard-require elicitation enforcement, and a phone-first
-permission gate for tool-approval prompts.
+permission gate for tool-approval prompts. Distributed as prebuilt binaries via
+GitHub Releases (GoReleaser); `/noti:setup` downloads the right one for your
+platform, so Go is no longer required to run noti.
 
 ### Added
 

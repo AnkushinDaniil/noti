@@ -42,11 +42,14 @@ Config schema additions (now fully active):
   system. Always exits 0; never blocks Claude indefinitely.
 - **`permissions.tools`**: configurable list of gated tool names.
 
-## Step 3 — Release binaries + download-at-setup
+## Step 3 — Release binaries + download-at-setup (done)
 
-- GitHub Actions release workflow: triggered on version tags, uploads
-  `noti-darwin-amd64`, `noti-darwin-arm64`, `noti-linux-amd64`, `noti-linux-arm64`
-  as release assets.
-- `scripts/build.sh` enhanced: prefer downloading the release binary for the
-  current platform from GitHub releases; fall back to `go build` if Go is present.
-- Setup skill updated to try the download path first, so Go is not a hard requirement.
+- GoReleaser (`.goreleaser.yaml`) + a tag-triggered GitHub Actions release
+  workflow (`.github/workflows/release.yml`) build and publish per-platform
+  archives (`noti_darwin_amd64`, `noti_darwin_arm64`, `noti_linux_amd64`,
+  `noti_linux_arm64`) plus `checksums.txt`. The release tag is injected into the
+  binary version via `-ldflags`.
+- `scripts/fetch-binary.sh` downloads the right archive for the current platform,
+  verifies the checksum, and installs it to `$CLAUDE_PLUGIN_DATA/bin/noti`,
+  falling back to `go build` only if the download fails and Go is present.
+- `/noti:setup` downloads the binary first, so **Go is not required** for normal use.

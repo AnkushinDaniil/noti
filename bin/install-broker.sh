@@ -29,8 +29,15 @@ if [ ! -x "${NOTI_BIN}" ]; then
   NOTI_BIN="${PLUGIN_ROOT}/bin/noti"
 fi
 if [ ! -x "${NOTI_BIN}" ]; then
-  err "noti binary not found at ${DATA_DIR}/bin/noti or ${PLUGIN_ROOT}/bin/noti"
-  err "Run scripts/build.sh first, or set CLAUDE_PLUGIN_DATA to where the binary lives."
+  info "noti binary not found — fetching it…"
+  if [ -x "${PLUGIN_ROOT}/scripts/fetch-binary.sh" ]; then
+    OUT="${DATA_DIR}/bin/noti" bash "${PLUGIN_ROOT}/scripts/fetch-binary.sh" || true
+  fi
+  NOTI_BIN="${DATA_DIR}/bin/noti"
+fi
+if [ ! -x "${NOTI_BIN}" ]; then
+  err "noti binary not found and could not be fetched."
+  err "Run ${PLUGIN_ROOT}/scripts/fetch-binary.sh (or scripts/build.sh with Go installed)."
   exit 1
 fi
 

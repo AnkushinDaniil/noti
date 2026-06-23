@@ -19,6 +19,9 @@ config.json
 noti-*-*
 *.test
 
+# GoReleaser
+/dist/
+
 # Editor / IDE
 .idea/
 .vscode/

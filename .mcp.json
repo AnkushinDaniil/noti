@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "noti": {
-      "command": "python3",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/server/mcp_server.py"],
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/mcp.sh",
+      "args": [],
       "env": { "NOTI_BROKER_URL": "http://127.0.0.1:7432" }
     }
   }
